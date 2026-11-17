@@ -114,7 +114,7 @@ impl<'a> Platform<'a> {
     }
 
     /// Separator of `PATH` entries for this OS.
-    fn path_separator(&self) -> char {
+    pub(crate) fn path_separator(&self) -> char {
         if self.os == Os::Windows { ';' } else { ':' }
     }
 
@@ -159,6 +159,53 @@ impl<'a> Platform<'a> {
             .split(self.path_separator())
             .filter(|d| !d.is_empty())
             .find_map(|dir| with_suffixes(Path::new(dir).join(name)))
+    }
+
+    /// Install folders searched after `PATH` (AGENT-001): an app started from the desktop menu gets
+    /// the session's short `PATH`, which often lacks the per-user folders where `claude` / `codex`
+    /// (native installer, npm, bun, volta) live. The caller keeps the ones that exist.
+    pub fn extra_bin_dirs(&self) -> Vec<PathBuf> {
+        let home = self.home();
+        let under = |rel: &[&str]| {
+            home.as_ref()
+                .map(|h| rel.iter().fold(h.clone(), |p, r| p.join(r)))
+        };
+        let mut dirs: Vec<Option<PathBuf>> = match self.os {
+            Os::Windows => vec![
+                under(&[".local", "bin"]),
+                self.appdata().map(|a| a.join("npm")),
+                under(&[".bun", "bin"]),
+                under(&[".volta", "bin"]),
+            ],
+            _ => vec![
+                under(&[".local", "bin"]),
+                under(&[".claude", "local"]),
+                under(&[".npm-global", "bin"]),
+                under(&[".bun", "bin"]),
+                under(&[".volta", "bin"]),
+                under(&[".yarn", "bin"]),
+                under(&["bin"]),
+                Some("/usr/local/bin".into()),
+            ],
+        };
+        match self.os {
+            Os::Linux => dirs.push(Some("/snap/bin".into())),
+            Os::MacOs => dirs.push(Some("/opt/homebrew/bin".into())),
+            Os::Windows => {}
+        }
+        dirs.into_iter().flatten().collect()
+    }
+
+    /// nvm's installed Node versions (`$NVM_DIR` or `~/.nvm`, then `versions/node`); not on Windows,
+    /// where nvm-windows puts the active Node on `PATH` itself.
+    pub fn nvm_versions_dir(&self) -> Option<PathBuf> {
+        if self.os == Os::Windows {
+            return None;
+        }
+        let root = self
+            .var_path("NVM_DIR")
+            .or_else(|| Some(self.home()?.join(".nvm")))?;
+        Some(root.join("versions").join("node"))
     }
 
     /// Where the Codex CLI may be installed besides `PATH` (only the Linux path is verified).
@@ -369,6 +416,38 @@ mod tests {
         assert!(
             p.find_program("pycharm", &|q: &Path| q.to_string_lossy().ends_with(".bat"))
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn extra_bin_dirs_per_os() {
+        let linux = platform(Os::Linux, &[("HOME", "/home/u")]).extra_bin_dirs();
+        assert_eq!(linux[0], PathBuf::from("/home/u/.local/bin"));
+        assert!(linux.contains(&"/home/u/.claude/local".into()));
+        assert!(linux.contains(&"/home/u/.npm-global/bin".into()));
+        assert_eq!(linux.last(), Some(&PathBuf::from("/snap/bin")));
+        let mac = platform(Os::MacOs, &[("HOME", "/Users/u")]).extra_bin_dirs();
+        assert_eq!(mac.last(), Some(&PathBuf::from("/opt/homebrew/bin")));
+        let win = platform(Os::Windows, &[("USERPROFILE", r"C:\U"), ("APPDATA", r"C:\R")]);
+        let win = win.extra_bin_dirs();
+        assert_eq!(win[0], Path::new(r"C:\U").join(".local").join("bin"));
+        assert_eq!(win[1], Path::new(r"C:\R").join("npm"));
+        // Without a home only the fixed folders remain.
+        assert_eq!(
+            platform(Os::Linux, &[]).extra_bin_dirs(),
+            [PathBuf::from("/usr/local/bin"), "/snap/bin".into()]
+        );
+    }
+
+    #[test]
+    fn nvm_versions_dir_per_os() {
+        let p = platform(Os::Linux, &[("HOME", "/home/u")]);
+        assert_eq!(p.nvm_versions_dir(), Some("/home/u/.nvm/versions/node".into()));
+        let p = platform(Os::MacOs, &[("HOME", "/Users/u"), ("NVM_DIR", "/opt/nvm")]);
+        assert_eq!(p.nvm_versions_dir(), Some("/opt/nvm/versions/node".into()));
+        assert_eq!(
+            platform(Os::Windows, &[("USERPROFILE", r"C:\U")]).nvm_versions_dir(),
+            None
         );
     }
 

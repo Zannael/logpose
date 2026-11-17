@@ -32,8 +32,8 @@ Nothing leaves your machine except the summary calls you trigger yourself.
 
 Linux builds are attached to each [release](https://github.com/Zannael/logpose/releases):
 
-- **Debian / Ubuntu:** `sudo apt install ./Logpose_0.1.0_amd64.deb`
-- **Fedora / openSUSE:** `sudo dnf install ./Logpose-0.1.0-1.x86_64.rpm`
+- **Debian / Ubuntu:** `sudo apt install ./Logpose_0.1.1_amd64.deb`
+- **Fedora / openSUSE:** `sudo dnf install ./Logpose-0.1.1-1.x86_64.rpm`
 - **Anything else:** download the AppImage, `chmod +x` it and run it.
 
 The code has macOS and Windows paths in it, but I haven't built or tried it on either yet.
@@ -42,7 +42,9 @@ On first launch it asks which folders to scan. Settings go to `~/.config/logpose
 local database to `~/.local/share/logpose/`. Agent logs are read from `~/.claude` and `~/.codex`, or
 from `CLAUDE_CONFIG_DIR` / `CODEX_HOME` if set.
 
-Summaries need `claude` or `codex` on your `PATH`. Everything else works without them.
+Summaries need the `claude` or `codex` CLI installed and logged in. Logpose looks for them on `PATH` and
+in the usual install folders (`~/.local/bin`, npm, nvm, Homebrew…); if yours lives somewhere else, set
+its path in Settings → Agents. Everything else works without them.
 
 ## Building from source
 

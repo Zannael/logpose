@@ -4,7 +4,7 @@
 
 import type { Backend } from "./backend";
 import type { RemovalItem, RemovalPlan } from "./types";
-import type { Agent, AgentCheck, AgentSplit, Known, SynthesisSummary, SynthesisUpdate, Synthesis, BoardColumn, BoardRow, Bucket, Commit, ClaudeLimits, Locations, Neglected, PickerInfo, ProjectReport, RepoReport, RepoSignals, RuleStatus, ScanReport, Settings, StatsView } from "./types";
+import type { Agent, AgentCheck, AgentPrograms, AgentSplit, Known, SynthesisSummary, SynthesisUpdate, Synthesis, BoardColumn, BoardRow, Bucket, Commit, ClaudeLimits, Locations, Neglected, PickerInfo, ProjectReport, RepoReport, RepoSignals, RuleStatus, ScanReport, Settings, StatsView } from "./types";
 
 const day = 86_400_000;
 const ago = (d: number) => new Date(Date.now() - d * day).toISOString();
@@ -184,6 +184,15 @@ function ordered(): BoardRow[] {
 const columnIndex = (c: BoardColumn) => ["now", "next", "paused", "maintenance", "archived"].indexOf(c);
 
 let roots: string[] = params.has("setup") ? [] : ["~/dev", "~/switch"];
+// `?agents=none|claude|codex` previews missing agent CLIs (AGENT-002); both are found by default.
+const agentsParam = params.get("agents") ?? "both";
+const programs: AgentPrograms = {
+  claude_code: ["both", "claude"].includes(agentsParam) ? "/home/user/.local/bin/claude" : null,
+  codex: ["both", "codex"].includes(agentsParam) ? "/usr/lib/chatgpt/resources/codex" : null,
+  configured_claude: "",
+  configured_codex: "",
+};
+const autoPrograms = { ...programs };
 
 let exclude: string[] = ["/home/user/dev/work-*"];
 let aliases: Record<string, string> = { [switchPath]: "Switch sysmodule" };
@@ -308,6 +317,7 @@ export const mockBackend: Backend = {
     await new Promise((r) => setTimeout(r, 200));
     return {
       default_agent: params.has("autopick") ? "claude" : "ask",
+      found: { ...programs },
       meters: {
         claude_code: { sessions: 12, tokens: 1_840_000, cache_read: 420_000_000, last_used: ago(0.3) },
         codex: { sessions: 31, tokens: 5_200_000, cache_read: 90_000_000, last_used: ago(0.1) },
@@ -315,6 +325,19 @@ export const mockBackend: Backend = {
         codex_limit: { used_percent: 68, window_minutes: 10_080, resets_at: ago(-2.5), observed_at: ago(0.1), plan_type: "plus", expired: false },
       },
     };
+  },
+  async agentPrograms() {
+    return { ...programs };
+  },
+  async setAgentPrograms(claude, codex) {
+    await new Promise((r) => setTimeout(r, 200));
+    programs.configured_claude = claude.trim();
+    programs.configured_codex = codex.trim();
+    // A configured path counts as found only when it is absolute; empty goes back to the automatic result.
+    const resolve = (configured: string, auto: string | null) => (configured ? (configured.startsWith("/") ? configured : null) : auto);
+    programs.claude_code = resolve(programs.configured_claude, autoPrograms.claude_code);
+    programs.codex = resolve(programs.configured_codex, autoPrograms.codex);
+    return { ...programs };
   },
   async digestIfDue(): Promise<Neglected[]> {
     return [];

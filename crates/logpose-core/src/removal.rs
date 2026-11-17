@@ -134,7 +134,7 @@ pub struct DockerCli {
 
 impl DockerCli {
     pub fn find() -> Option<Self> {
-        crate::launcher::find_program("docker", std::env::var_os("PATH").as_deref())
+        crate::launcher::find_program("docker", Some(crate::launcher::search_path()))
             .map(|program| Self { program })
     }
 }

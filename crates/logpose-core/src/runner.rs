@@ -82,7 +82,7 @@ pub fn render_batch(packs: &[(&str, &str)]) -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
-    #[error("agent binary not found: {0}")]
+    #[error("{0}")]
     NotFound(String),
     #[error("failed to run {program}: {source}")]
     Spawn {
@@ -184,6 +184,7 @@ fn exec(
         match Command::new(program)
             .args(args)
             .current_dir(cwd)
+            .env("PATH", crate::launcher::child_path(program))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -470,19 +471,15 @@ impl CodexRunner {
 
     /// Config override → `codex` on `PATH` → known per-OS locations (`Platform::codex_fallbacks`).
     pub fn discover(override_path: Option<&str>, model: Option<String>) -> Result<Self, RunError> {
-        let path_var = std::env::var_os("PATH");
-        let found = match override_path {
-            Some(p) => crate::launcher::find_program(p, path_var.as_deref()),
-            None => crate::launcher::find_program("codex", path_var.as_deref()).or_else(|| {
-                crate::platform::Platform::current()
-                    .codex_fallbacks()
-                    .into_iter()
-                    .find(|p| crate::launcher::is_executable(p))
-            }),
-        };
-        found
+        let configured = override_path.unwrap_or("");
+        crate::launcher::find_agent(crate::sessions::Agent::Codex, configured)
             .map(|p| Self::new(p, model))
-            .ok_or_else(|| RunError::NotFound(override_path.unwrap_or("codex").into()))
+            .ok_or_else(|| {
+                RunError::NotFound(crate::launcher::agent_not_found(
+                    crate::sessions::Agent::Codex,
+                    configured,
+                ))
+            })
     }
 
     pub fn args(&self, schema_file: &Path) -> Vec<OsString> {

@@ -3,7 +3,7 @@
   // keys and comments are kept) and triggers a rescan.
   import { backend } from "./backend";
   import { setTheme, theme, type Theme } from "./theme.svelte";
-  import type { AgentCheck, Locations, ProjectReport } from "./types";
+  import type { AgentCheck, AgentPrograms, Locations, ProjectReport } from "./types";
 
   let { projects, onSaved }: { projects: ProjectReport[]; onSaved: () => Promise<number | null> } = $props();
 
@@ -68,6 +68,35 @@
       checks[agent] = await backend.checkAgent(agent);
     } catch (e) {
       checks[agent] = { agent, program: null, ok: false, model: null, tokens: 0, millis: 0, error: String(e) };
+    }
+  }
+
+  // AGENT-001: where the agent CLIs are; a path is only needed when automatic lookup fails.
+  let programs = $state<AgentPrograms | null>(null);
+  let programInput = $state({ "claude-code": "", codex: "" });
+  let programStatus = $state("");
+  let programError = $state("");
+  function loadPrograms(p: AgentPrograms) {
+    programs = p;
+    programInput = { "claude-code": p.configured_claude, codex: p.configured_codex };
+  }
+  $effect(() => {
+    backend.agentPrograms().then(loadPrograms).catch((e) => (programError = String(e)));
+  });
+  const foundFor = (id: "claude-code" | "codex") => (id === "codex" ? programs?.codex : programs?.claude_code) ?? null;
+  const programsDirty = $derived(
+    programs !== null &&
+      (programInput["claude-code"].trim() !== programs.configured_claude || programInput.codex.trim() !== programs.configured_codex),
+  );
+  async function savePrograms() {
+    programStatus = "";
+    programError = "";
+    try {
+      loadPrograms(await backend.setAgentPrograms(programInput["claude-code"], programInput.codex));
+      checks = {};
+      programStatus = "Saved.";
+    } catch (e) {
+      programError = String(e);
     }
   }
 
@@ -230,6 +259,32 @@
         </li>
       {/each}
     </ul>
+    <h4>Programs</h4>
+    <p class="muted">
+      Logpose looks on <code>PATH</code> and in the usual install folders (<code>~/.local/bin</code>, npm, nvm, Homebrew…).
+      Enter a path only if a program is installed somewhere else.
+    </p>
+    <ul class="rows">
+      {#each agents as a (a.id)}
+        {@const f = foundFor(a.id)}
+        <li class="agent">
+          <span class="who">{a.label}</span>
+          <input
+            class="grow"
+            bind:value={programInput[a.id]}
+            placeholder={programs === null ? "" : f && !programs[a.id === "codex" ? "configured_codex" : "configured_claude"] ? f : "Find automatically"}
+            aria-label={`Path to the ${a.label} program`}
+          />
+          <span class="small" class:ok={!!f} class:error={programs !== null && !f} title={f ?? ""}>
+            {programs === null ? "" : f ? "Found" : "Not found"}
+          </span>
+        </li>
+      {/each}
+    </ul>
+    <div class="add">
+      <button onclick={savePrograms} disabled={!programsDirty}>Save paths</button>
+      {#if programError}<span class="error small" role="alert">{programError}</span>{:else if programStatus}<span class="ok small" role="status">{programStatus}</span>{/if}
+    </div>
   </section>
 
   <footer>
@@ -324,6 +379,10 @@
   footer p {
     width: 100%;
     margin: 0;
+  }
+  h4 {
+    margin: 1rem 0 0.2rem;
+    font-size: 0.9rem;
   }
   .agent {
     align-items: flex-start;

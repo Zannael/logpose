@@ -465,7 +465,10 @@ async fn check_agent(db: State<'_, Db>, agent: String) -> Result<runner::AgentCh
                 }
                 Err(e) => not_found("claude-code", e),
             },
-            "codex" => match runner::CodexRunner::discover(None, Some(config.agent.model_codex.clone())) {
+            "codex" => match runner::CodexRunner::discover(
+                Some(&config.agent.program_codex),
+                Some(config.agent.model_codex.clone()),
+            ) {
                 Ok(r) => {
                     let program = r.program.clone();
                     runner::check_agent(&r, Some(&program))
@@ -480,9 +483,9 @@ async fn check_agent(db: State<'_, Db>, agent: String) -> Result<runner::AgentCh
 }
 
 fn claude_runner(config: &Config) -> Result<runner::ClaudeRunner, String> {
-    let path = std::env::var_os("PATH");
-    let program = logpose_core::launcher::find_program("claude", path.as_deref())
-        .ok_or("`claude` not found on PATH")?;
+    let configured = &config.agent.program_claude;
+    let program = logpose_core::launcher::find_agent(Agent::ClaudeCode, configured)
+        .ok_or_else(|| logpose_core::launcher::agent_not_found(Agent::ClaudeCode, configured))?;
     Ok(runner::ClaudeRunner::new(
         program,
         config.agent.model_claude.clone(),
@@ -813,8 +816,11 @@ async fn synthesize(
             "codex" => (
                 None,
                 Some(
-                    runner::CodexRunner::discover(None, Some(config.agent.model_codex.clone()))
-                        .map_err(|e| e.to_string())?,
+                    runner::CodexRunner::discover(
+                        Some(&config.agent.program_codex),
+                        Some(config.agent.model_codex.clone()),
+                    )
+                    .map_err(|e| e.to_string())?,
                 ),
             ),
             other => return Err(format!("unknown agent: {other}")),
@@ -883,6 +889,42 @@ struct PickerInfo {
     /// `agent.default` from the config: `ask` shows the picker, otherwise that agent runs.
     default_agent: config::DefaultAgent,
     meters: logpose_core::usage::UsageMeters,
+    /// Which agent CLIs exist on this machine (AGENT-002).
+    found: AgentPrograms,
+}
+
+/// The configured program per agent (empty = find it) and where each was found (AGENT-001).
+#[derive(Debug, Serialize)]
+struct AgentPrograms {
+    claude_code: Option<String>,
+    codex: Option<String>,
+    configured_claude: String,
+    configured_codex: String,
+}
+
+fn agent_programs_for(config: &Config) -> AgentPrograms {
+    let found = |a, c: &str| logpose_core::launcher::find_agent(a, c).map(|p| p.display().to_string());
+    AgentPrograms {
+        claude_code: found(Agent::ClaudeCode, &config.agent.program_claude),
+        codex: found(Agent::Codex, &config.agent.program_codex),
+        configured_claude: config.agent.program_claude.clone(),
+        configured_codex: config.agent.program_codex.clone(),
+    }
+}
+
+/// Where the agent CLIs are (Settings).
+#[tauri::command]
+fn agent_programs() -> Result<AgentPrograms, String> {
+    let config = Config::load(&config_path()?).map_err(|e| e.to_string())?;
+    Ok(agent_programs_for(&config))
+}
+
+/// Save the agent program overrides (empty = find automatically) and report where they resolve.
+#[tauri::command]
+fn set_agent_programs(claude: String, codex: String) -> Result<AgentPrograms, String> {
+    let path = config_path()?;
+    config::save_agent_programs(&path, &claude, &codex).map_err(|e| e.to_string())?;
+    agent_programs()
 }
 
 /// Usage meters for the startup agent picker (SYN-009); reads the session logs again.
@@ -904,6 +946,7 @@ async fn agent_picker(db: State<'_, Db>) -> Result<PickerInfo, String> {
             .unwrap_or_default();
         sessions.extend(codex_scan.sessions);
         Ok(PickerInfo {
+            found: agent_programs_for(&config),
             default_agent: config.agent.default,
             meters: logpose_core::usage::meters(
                 &sessions,
@@ -999,17 +1042,14 @@ fn launch_agent(
     use logpose_core::launcher;
     let dir = project_dir(&path)?;
     let config = Config::load(&config_path()?).map_err(|e| e.to_string())?;
-    let path_var = std::env::var_os("PATH");
-    let find = |name: &str| launcher::find_program(name, path_var.as_deref());
-    let program = match agent.as_str() {
-        "claude-code" => find("claude").ok_or("`claude` not found on PATH")?,
-        "codex" => {
-            runner::CodexRunner::discover(None, None)
-                .map_err(|e| e.to_string())?
-                .program
-        }
+    let find = |name: &str| launcher::find_program(name, Some(launcher::search_path()));
+    let (which, configured) = match agent.as_str() {
+        "claude-code" => (Agent::ClaudeCode, &config.agent.program_claude),
+        "codex" => (Agent::Codex, &config.agent.program_codex),
         other => return Err(format!("unknown agent: {other}")),
     };
+    let program = launcher::find_agent(which, configured)
+        .ok_or_else(|| launcher::agent_not_found(which, configured))?;
     // The project's summary, from NEXT.md or the cache (no agent call).
     let known = {
         let guard = last.0.lock().map_err(|_| "scan lock poisoned".to_string())?;
@@ -1038,7 +1078,7 @@ fn launch_agent(
              Don't change anything yet."
         ),
     };
-    let cmd = launcher::agent_terminal(
+    let mut cmd = launcher::agent_terminal(
         &logpose_core::platform::Platform::current(),
         config.open.terminal.as_deref(),
         &find,
@@ -1047,6 +1087,7 @@ fn launch_agent(
         &[prompt.into()],
     )
     .ok_or("no terminal found; set `terminal` under [open] in config.toml")?;
+    cmd.path_env = Some(launcher::child_path(&program));
     launcher::spawn_detached_in(&cmd, &dir)
         .map_err(|e| format!("cannot start {}: {e}", cmd.program.display()))?;
     println!(
@@ -1115,6 +1156,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            agent_programs,
+            set_agent_programs,
             removal_plan,
             check_remote,
             remove_project,

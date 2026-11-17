@@ -95,8 +95,24 @@
   async function startupPick() {
     try {
       const info = await backend.agentPicker();
-      if (info.default_agent === "ask") picker = info;
-      else pick(info.default_agent === "codex" ? "codex" : "claude-code");
+      // AGENT-002: never start a run with an agent that isn't installed.
+      const found = { "claude-code": !!info.found.claude_code, codex: !!info.found.codex };
+      if (!found["claude-code"] && !found.codex) {
+        synthNote =
+          "Summaries need Claude Code or Codex, and neither was found on this computer. The board works without them; " +
+          "if one is installed somewhere unusual, set its path in Settings → Agents.";
+        return;
+      }
+      // The agent remembered for Update summaries must be one that exists.
+      if (!found[agent]) setAgent(found["claude-code"] ? "claude-code" : "codex");
+      if (info.default_agent === "ask") {
+        picker = info;
+        return;
+      }
+      const preferred: Agent = info.default_agent === "codex" ? "codex" : "claude-code";
+      if (found[preferred]) pick(preferred);
+      else
+        synthNote = `Summaries are set to use ${preferred === "codex" ? "Codex" : "Claude Code"}, which wasn't found on this computer. Install it, or set its path in Settings → Agents.`;
     } catch (e) {
       synthNote = `Could not read agent usage: ${e}`;
     }

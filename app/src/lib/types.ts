@@ -233,8 +233,18 @@ export interface AgentMeter {
 }
 
 /** `agent_picker` (SYN-009): config default and usage meters. */
+/** Configured program per agent (empty = found automatically) and where each was found (AGENT-001). */
+export interface AgentPrograms {
+  claude_code: string | null;
+  codex: string | null;
+  configured_claude: string;
+  configured_codex: string;
+}
+
 export interface PickerInfo {
   default_agent: "ask" | "claude" | "codex";
+  /** Which agent CLIs exist on this machine (AGENT-002). */
+  found: AgentPrograms;
   meters: {
     claude_code: AgentMeter;
     codex: AgentMeter;

@@ -9,7 +9,7 @@
 //! Windows Terminal (`wt`) or a new console window on Windows. Every OS is built from a
 //! [`Platform`], so each is unit-tested on any machine.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -94,6 +94,9 @@ pub struct OpenCommand {
     /// Windows: start in a new console window with inherited stdio (the terminal fallback).
     #[serde(skip)]
     pub new_console: bool,
+    /// `PATH` for the child; [`search_path`] when unset.
+    #[serde(skip)]
+    pub path_env: Option<OsString>,
 }
 
 impl OpenCommand {
@@ -104,6 +107,7 @@ impl OpenCommand {
             kind,
             fell_back,
             new_console: false,
+            path_env: None,
         }
     }
 
@@ -323,7 +327,10 @@ fn one_line(s: &std::ffi::OsStr) -> String {
 /// [`OpenCommand::new_console`] (Windows) the child gets its own console and keeps its stdio.
 pub fn spawn_detached_in(cmd: &OpenCommand, dir: &Path) -> std::io::Result<()> {
     let mut command = std::process::Command::new(&cmd.program);
-    command.args(&cmd.args).current_dir(dir);
+    command
+        .args(&cmd.args)
+        .current_dir(dir)
+        .env("PATH", cmd.path_env.as_deref().unwrap_or(search_path()));
     if cmd.new_console {
         #[cfg(windows)]
         {
@@ -349,6 +356,7 @@ pub fn spawn_detached_in(cmd: &OpenCommand, dir: &Path) -> std::io::Result<()> {
 pub fn spawn_detached(cmd: &OpenCommand) -> std::io::Result<()> {
     let mut child = std::process::Command::new(&cmd.program)
         .args(&cmd.args)
+        .env("PATH", cmd.path_env.as_deref().unwrap_or(search_path()))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -364,7 +372,7 @@ pub fn open_command(project: &Path, config: &OpenConfig) -> Option<OpenCommand> 
         &Platform::current(),
         project,
         config,
-        &|name| find_program(name, std::env::var_os("PATH").as_deref()),
+        &|name| find_program(name, Some(search_path())),
         &|p| p.exists(),
     )
 }
@@ -451,6 +459,131 @@ pub fn find_program(name: &str, path_var: Option<&std::ffi::OsStr>) -> Option<Pa
         }
     });
     platform.find_program(name, &is_executable)
+}
+
+/// `path_var` followed by the extra install folders that exist and the newest nvm Node, without
+/// duplicates (AGENT-001). Pure, for tests; [`search_path`] is this machine's.
+pub fn extended_path(
+    platform: &Platform,
+    path_var: Option<&OsStr>,
+    exists: &dyn Fn(&Path) -> bool,
+    newest_node: Option<PathBuf>,
+) -> OsString {
+    let sep = platform.path_separator();
+    let mut dirs: Vec<PathBuf> = path_var
+        .map(|p| {
+            p.to_string_lossy()
+                .split(sep)
+                .filter(|d| !d.is_empty())
+                .map(PathBuf::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    let extra = platform.extra_bin_dirs().into_iter().chain(newest_node);
+    for d in extra {
+        if !dirs.contains(&d) && exists(&d) {
+            dirs.push(d);
+        }
+    }
+    join_dirs(&dirs, sep)
+}
+
+fn join_dirs(dirs: &[PathBuf], sep: char) -> OsString {
+    let mut out = OsString::new();
+    for (i, d) in dirs.iter().enumerate() {
+        if i > 0 {
+            out.push(sep.to_string());
+        }
+        out.push(d.as_os_str());
+    }
+    out
+}
+
+/// The `bin` folder of the highest `vX.Y.Z` under nvm's `versions/node`.
+pub fn newest_node_bin(versions: &Path) -> Option<PathBuf> {
+    let version = |name: &str| -> Option<Vec<u64>> {
+        name.strip_prefix('v')?
+            .split('.')
+            .map(|n| n.parse().ok())
+            .collect()
+    };
+    std::fs::read_dir(versions)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let v = version(&e.file_name().to_string_lossy())?;
+            let bin = e.path().join("bin");
+            bin.is_dir().then_some((v, bin))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, bin)| bin)
+}
+
+/// Where programs are looked up and the `PATH` children get: this process's `PATH` plus the usual
+/// install folders (AGENT-001). Computed once.
+pub fn search_path() -> &'static OsStr {
+    static PATH: std::sync::OnceLock<OsString> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let platform = Platform::current();
+        let node = platform.nvm_versions_dir().and_then(|v| newest_node_bin(&v));
+        extended_path(
+            &platform,
+            std::env::var_os("PATH").as_deref(),
+            &|p| p.is_dir(),
+            node,
+        )
+    })
+}
+
+/// `PATH` for a child that runs `program`: its own folder first (npm and nvm installs are Node
+/// scripts that need the `node` next to them), then [`search_path`].
+pub fn child_path(program: &Path) -> OsString {
+    let sep = Platform::current().path_separator();
+    let mut out = OsString::new();
+    if let Some(dir) = program.parent().filter(|d| !d.as_os_str().is_empty()) {
+        out.push(dir.as_os_str());
+        out.push(sep.to_string());
+    }
+    out.push(search_path());
+    out
+}
+
+/// The CLI of `agent` (AGENT-001): the configured program (a name or a path, `~` allowed) when set,
+/// else `claude` / `codex` on [`search_path`], else Codex's known install places. A configured
+/// program that doesn't exist gives `None`, not a silent fallback.
+pub fn find_agent(agent: crate::sessions::Agent, configured: &str) -> Option<PathBuf> {
+    let platform = Platform::current();
+    let configured = configured.trim();
+    if !configured.is_empty() {
+        let expanded = match configured.strip_prefix("~/").zip(platform.home()) {
+            Some((rest, home)) => home.join(rest).to_string_lossy().into_owned(),
+            None => configured.to_owned(),
+        };
+        return find_program(&expanded, Some(search_path()));
+    }
+    match agent {
+        crate::sessions::Agent::ClaudeCode => find_program("claude", Some(search_path())),
+        crate::sessions::Agent::Codex => find_program("codex", Some(search_path()))
+            .or_else(|| platform.codex_fallbacks().into_iter().find(|p| is_executable(p))),
+    }
+}
+
+/// The message for an agent CLI that [`find_agent`] didn't find.
+pub fn agent_not_found(agent: crate::sessions::Agent, configured: &str) -> String {
+    let name = match agent {
+        crate::sessions::Agent::ClaudeCode => "claude",
+        crate::sessions::Agent::Codex => "codex",
+    };
+    if configured.trim().is_empty() {
+        format!(
+            "`{name}` not found on PATH or in the usual install folders; install it or set its path in Settings"
+        )
+    } else {
+        format!(
+            "`{}` (set in Settings) not found or not executable",
+            configured.trim()
+        )
+    }
 }
 
 pub(crate) fn is_executable(path: &Path) -> bool {
@@ -823,6 +956,7 @@ mod tests {
             kind: ProjectKind::Code,
             fell_back: false,
             new_console: false,
+            path_env: None,
         };
         let start = std::time::Instant::now();
         spawn_detached(&cmd).unwrap();
@@ -841,6 +975,74 @@ mod tests {
             ..cmd
         };
         assert!(spawn_detached(&missing).is_err());
+    }
+
+    #[test]
+    fn extended_path_appends_existing_extra_dirs_once() {
+        let p = Platform::new(Os::Linux, |k| (k == "HOME").then(|| "/home/u".into()));
+        let exists = |d: &Path| d == Path::new("/home/u/.local/bin") || d == Path::new("/usr/local/bin");
+        let node = Some(PathBuf::from("/home/u/.nvm/versions/node/v22.1.0/bin"));
+        let out = extended_path(
+            &p,
+            Some(OsStr::new("/usr/bin:/usr/local/bin:")),
+            &|d| exists(d) || d.ends_with("v22.1.0/bin"),
+            node,
+        );
+        assert_eq!(
+            out,
+            "/usr/bin:/usr/local/bin:/home/u/.local/bin:/home/u/.nvm/versions/node/v22.1.0/bin"
+        );
+        // No PATH at all still yields the extra dirs.
+        assert_eq!(
+            extended_path(&p, None, &exists, None),
+            "/home/u/.local/bin:/usr/local/bin"
+        );
+        let w = Platform::new(Os::Windows, |k| (k == "USERPROFILE").then(|| r"C:\U".into()));
+        let out = extended_path(&w, Some(OsStr::new(r"C:\bin")), &|_| true, None);
+        assert!(out.to_string_lossy().starts_with(r"C:\bin;C:\U"), "{out:?}");
+    }
+
+    #[test]
+    fn newest_node_bin_compares_versions_numerically() {
+        let dir = tempfile::tempdir().unwrap();
+        for v in ["v9.11.2", "v20.10.0", "v18.19.1", "notaversion"] {
+            fs::create_dir_all(dir.path().join(v).join("bin")).unwrap();
+        }
+        fs::create_dir_all(dir.path().join("v99.0.0")).unwrap(); // no bin/
+        assert_eq!(
+            newest_node_bin(dir.path()),
+            Some(dir.path().join("v20.10.0").join("bin"))
+        );
+        assert_eq!(newest_node_bin(&dir.path().join("missing")), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agents_get_their_own_folder_on_path() {
+        let p = child_path(Path::new("/home/u/.nvm/versions/node/v22/bin/claude"));
+        let s = p.to_string_lossy();
+        assert!(s.starts_with("/home/u/.nvm/versions/node/v22/bin:"), "{s}");
+        assert!(s.ends_with(&*search_path().to_string_lossy()));
+        assert_eq!(child_path(Path::new("claude")), search_path());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_agent_program_wins_and_must_exist() {
+        use crate::sessions::Agent;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("my-claude");
+        fs::write(&exe, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            find_agent(Agent::ClaudeCode, &format!(" {} ", exe.display())),
+            Some(exe)
+        );
+        let missing = dir.path().join("nope");
+        assert_eq!(find_agent(Agent::Codex, missing.to_str().unwrap()), None);
+        assert!(agent_not_found(Agent::Codex, "/x/codex").contains("set in Settings"));
+        assert!(agent_not_found(Agent::ClaudeCode, "").starts_with("`claude` not found"));
     }
 
     #[cfg(unix)]

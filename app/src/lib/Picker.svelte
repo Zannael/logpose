@@ -36,10 +36,24 @@
     }
   }
   let first = $state<HTMLButtonElement>();
+  let second = $state<HTMLButtonElement>();
   $effect(() => {
-    first?.focus();
+    (first ?? second)?.focus();
   });
+
+  // AGENT-002: an agent whose CLI wasn't found can't be picked.
+  const installUrl = { claude: "https://github.com/anthropics/claude-code", codex: "https://github.com/openai/codex" };
 </script>
+
+{#snippet missing(cli: string, url: string)}
+  <p class="meter-text">Not found on this computer.</p>
+  <p class="muted small">
+    Summaries run the <code>{cli}</code> command-line tool with your own account.
+    <button class="link" onclick={() => backend.openUrl(url).catch(() => {})}>How to install it</button>. If it's
+    already installed somewhere unusual, set its path in Settings → Agents.
+  </p>
+  <button disabled>Not installed</button>
+{/snippet}
 
 <svelte:window onkeydown={(e) => e.key === "Escape" && onSkip()} />
 
@@ -52,8 +66,11 @@
   </p>
 
   <div class="options">
-    <section class="option">
+    <section class="option" class:missing={!info.found.claude_code}>
       <h3>Claude Code</h3>
+      {#if !info.found.claude_code}
+        {@render missing("claude", installUrl.claude)}
+      {:else}
       {#if claudeLimits}
         {#each [{ label: "5-hour window", w: claudeLimits.five_hour, soon: true }, { label: "Weekly", w: claudeLimits.seven_day, soon: false }] as row (row.label)}
           {#if row.w}
@@ -95,10 +112,14 @@
       </p>
       {#if m.claude_code.last_used}<p class="muted small" title={when(m.claude_code.last_used)}>Last used {ago(m.claude_code.last_used)}</p>{/if}
       <button class="primary" bind:this={first} onclick={() => onPick("claude-code")}>Summarize with Claude Code</button>
+      {/if}
     </section>
 
-    <section class="option">
+    <section class="option" class:missing={!info.found.codex}>
       <h3>Codex</h3>
+      {#if !info.found.codex}
+        {@render missing("codex", installUrl.codex)}
+      {:else}
       {#if limit && !limit.expired}
         <div
           class={`bar ${level(limit.used_percent)}`}
@@ -126,7 +147,8 @@
         Last 7 days: {m.codex.sessions} sessions · ≈{compact(m.codex.tokens)} tokens (+{compact(m.codex.cache_read)} cache
         reads) <span class="tag">estimate</span>
       </p>
-      <button class="primary" onclick={() => onPick("codex")}>Summarize with Codex</button>
+      <button class="primary" bind:this={second} onclick={() => onPick("codex")}>Summarize with Codex</button>
+      {/if}
     </section>
   </div>
 
@@ -187,6 +209,9 @@
   }
   .option button {
     margin-top: auto;
+  }
+  .option.missing h3 {
+    color: var(--muted);
   }
   .option .small:last-of-type {
     margin-bottom: 1rem;

@@ -3,7 +3,7 @@
 
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { RemovalOutcome, RemovalPlan, RemovalStep } from "./types";
-import type { Agent, AgentCheck, BoardColumn, BoardRow, Commit, ClaudeLimits, Known, Locations, Neglected, PickerInfo, RuleStatus, ScanReport, Settings, SetupState, StatsView, SynthesisSummary, SynthesisUpdate } from "./types";
+import type { Agent, AgentCheck, AgentPrograms, BoardColumn, BoardRow, Commit, ClaudeLimits, Known, Locations, Neglected, PickerInfo, RuleStatus, ScanReport, Settings, SetupState, StatsView, SynthesisSummary, SynthesisUpdate } from "./types";
 import { mockBackend } from "./mock";
 
 export interface Backend {
@@ -42,8 +42,12 @@ export interface Backend {
     force: boolean,
     onUpdate: (u: SynthesisUpdate) => void,
   ): Promise<SynthesisSummary>;
-  /** Config default agent and usage meters for the startup picker. */
+  /** Config default agent, which agents are installed, and usage meters for the startup picker. */
   agentPicker(): Promise<PickerInfo>;
+  /** Where the agent CLIs are, and the configured overrides (empty = find automatically). */
+  agentPrograms(): Promise<AgentPrograms>;
+  /** Saves the overrides to config.toml and returns where they now resolve. */
+  setAgentPrograms(claude: string, codex: string): Promise<AgentPrograms>;
   /** Re-applies the suggested column placement to every card; returns the new board. */
   restorePlacement(): Promise<BoardRow[]>;
   /** One-line parking note (empty clears it); returns the board. */
@@ -102,6 +106,8 @@ const tauriBackend: Backend = {
     }
   },
   agentPicker: () => invoke<PickerInfo>("agent_picker"),
+  agentPrograms: () => invoke<AgentPrograms>("agent_programs"),
+  setAgentPrograms: (claude, codex) => invoke<AgentPrograms>("set_agent_programs", { claude, codex }),
   removalPlan: (path) => invoke<RemovalPlan>("removal_plan", { path }),
   checkRemote: (url) => invoke<number>("check_remote", { url }),
   removeProject: async (path, selected, onStep) => {

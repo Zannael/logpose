@@ -48,6 +48,9 @@ pub struct AgentConfig {
     pub default: DefaultAgent,
     pub model_claude: String,
     pub model_codex: String,
+    /// Program to run for Claude Code / Codex: a name or a path; empty = find it (AGENT-001).
+    pub program_claude: String,
+    pub program_codex: String,
     pub concurrency: usize,
     pub context_budget_tokens: usize,
 }
@@ -100,6 +103,8 @@ impl Default for AgentConfig {
             model_claude: "haiku".into(),
             // Codex counterpart of Haiku: "Fast and affordable model for easier tasks" (2026-11-03).
             model_codex: "gpt-6-luna".into(),
+            program_claude: String::new(),
+            program_codex: String::new(),
             concurrency: 3,
             context_budget_tokens: 3000,
         }
@@ -311,6 +316,25 @@ pub fn save_locations(path: &Path, loc: &Locations, home: Option<&Path>) -> Resu
         }
         for (key, alias) in wanted {
             table[&key] = toml_edit::value(alias);
+        }
+    })
+}
+
+/// Write `[agent] program_claude` / `program_codex` (AGENT-001), keeping everything else. An empty
+/// value removes the key, so the program is found automatically again.
+pub fn save_agent_programs(path: &Path, claude: &str, codex: &str) -> Result<(), ConfigError> {
+    edit(path, None, |doc| {
+        if !doc.get("agent").is_some_and(|t| t.is_table()) {
+            doc["agent"] = toml_edit::table();
+        }
+        let table = doc["agent"].as_table_mut().expect("table ensured above");
+        for (key, value) in [("program_claude", claude), ("program_codex", codex)] {
+            match value.trim() {
+                "" => {
+                    table.remove(key);
+                }
+                v => table[key] = toml_edit::value(v),
+            }
         }
     })
 }
@@ -546,6 +570,31 @@ mod tests {
             std::fs::read_to_string(&path).unwrap().contains("Projects"),
             "file untouched on error"
         );
+    }
+
+    #[test]
+    fn save_agent_programs_sets_and_clears() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "roots = [\"/srv/p\"]\n[agent]\ndefault = \"codex\" # mine\n",
+        )
+        .unwrap();
+        save_agent_programs(&path, " ~/.nvm/bin/claude ", "").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("default = \"codex\" # mine"), "{text}");
+        let c = Config::from_toml_with_home(&text, None).unwrap();
+        assert_eq!(c.agent.program_claude, "~/.nvm/bin/claude");
+        assert_eq!(c.agent.program_codex, "");
+        save_agent_programs(&path, "", "").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("program_"), "{text}");
+        // A file without an [agent] table gets one.
+        std::fs::write(&path, "roots = [\"/srv/p\"]\n").unwrap();
+        save_agent_programs(&path, "", "/opt/codex").unwrap();
+        let c = Config::from_toml_with_home(&std::fs::read_to_string(&path).unwrap(), None).unwrap();
+        assert_eq!(c.agent.program_codex, "/opt/codex");
     }
 
     #[test]
