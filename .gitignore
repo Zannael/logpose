@@ -1,0 +1,27 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Node / frontend
+node_modules/
+dist/
+.svelte-kit/
+build/
+
+# Tauri / SvelteKit app
+app/src-tauri/target/
+app/src-tauri/gen/
+app/build/
+app/.svelte-kit/
+
+# Python
+__pycache__/
+*.pyc
+
+# Local data / editor
+*.sqlite
+*.db
+.env
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["crates/logpose-core", "crates/logpose-cli", "app/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT"
+repository = "https://github.com/Zannael/logpose"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# Release profile for the app bundle and CLI (https://tauri.app/concept/size/).
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+# Dev builds keep only file/line tables (backtraces still show file and line): full debug info
+# made each app binary ~450 MB and `target/` grew to 50 GB in a day (2026-11-03).
+[profile.dev]
+debug = "line-tables-only"
+
+# Optimize dependencies (gix, sqlite, …) even in dev builds: the scan is ~5× slower otherwise.
+# No debug info for them at all.
+[profile.dev.package."*"]
+opt-level = 2
+debug = false

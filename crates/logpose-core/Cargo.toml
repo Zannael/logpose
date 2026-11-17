@@ -1,0 +1,27 @@
+[package]
+name = "logpose-core"
+description = "Zero-token core of Logpose: discovery, git scanning, session reading, scoring."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono = { version = "0.4.45", features = ["serde"] }
+gix = { version = "0.87.1", default-features = false, features = ["status", "revision", "blob-diff", "index", "sha1"] }
+globset = "0.4.19"
+ignore = "0.4.30"
+notify = "8"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+toml = "1.1.8"
+toml_edit = "0.25.17"
+trash = "5"
+
+[lints]
+workspace = true
