@@ -15,7 +15,22 @@ fn main() {
     let config = Config::load(&config::default_path().expect("config path")).expect("config");
     let report = scan::scan(&config, &LogSources::defaults(), Utc::now()).expect("scan");
     let start = Instant::now();
-    let s = stats::git_stats(&report.projects, &[], Utc::now() - Duration::days(365), &Local);
+    // The same repos, authors and "12 months" interval as the Stats screen.
+    let pairs: Vec<_> = report
+        .projects
+        .iter()
+        .map(|p| {
+            let repos = p.repo.iter().chain(&p.sub_repos).filter(|r| r.signals.is_some());
+            (p.project.path.clone(), repos.map(|r| r.path.clone()).collect())
+        })
+        .collect();
+    let since = (Local::now().date_naive() - Duration::days(364))
+        .and_hms_opt(0, 0, 0)
+        .and_then(|t| t.and_local_timezone(Local).earliest())
+        .expect("midnight")
+        .with_timezone(&Utc);
+    let authors = stats::Authors::RepoEmail(&config.stats.emails);
+    let s = stats::git_stats_for(&pairs, authors, since, None, &Local);
     let commits: usize = s.commits_per_day.values().sum();
     let busiest = s.commits_per_day.iter().max_by_key(|(_, n)| **n);
     let max_week = s.projects_per_week.values().max().copied().unwrap_or(0);
@@ -29,6 +44,9 @@ fn main() {
         s.emails.len(),
         s.errors.len(),
     );
+    for (email, n) in &s.commits_by_email {
+        println!("  {email}: {n} commits");
+    }
 
     let logs = LogSources::defaults();
     let start = Instant::now();

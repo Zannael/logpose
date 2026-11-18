@@ -39,6 +39,8 @@ pub struct GitStats {
     pub projects_per_week: BTreeMap<NaiveDate, usize>,
     /// Lowercased author emails that were counted.
     pub emails: Vec<String>,
+    /// Each of those emails → its distinct commits in the interval (0 shows a typo or an unused address).
+    pub commits_by_email: BTreeMap<String, usize>,
     /// Repositories that could not be read (`path: message`).
     pub errors: Vec<String>,
 }
@@ -109,6 +111,7 @@ pub fn git_stats_for<Tz: TimeZone>(
     let mut commits = Vec::new();
     let mut errors = Vec::new();
     let mut used: BTreeSet<String> = BTreeSet::new();
+    let mut by_email: BTreeMap<String, HashSet<String>> = BTreeMap::new();
     for (project, repos) in projects {
         for repo in repos {
             let (own, extra) = match authors {
@@ -126,11 +129,18 @@ pub fn git_stats_for<Tz: TimeZone>(
             }
             used.extend(emails.iter().cloned());
             match git::authored_commits(repo, &emails, since) {
-                Ok(list) => commits.extend(list.into_iter().map(|(id, at)| ProjectCommit {
-                    project: project.clone(),
-                    id,
-                    at,
-                })),
+                Ok(list) => {
+                    for (id, at, email) in list {
+                        if until.is_none_or(|u| at < u) {
+                            by_email.entry(email).or_default().insert(id.clone());
+                        }
+                        commits.push(ProjectCommit {
+                            project: project.clone(),
+                            id,
+                            at,
+                        });
+                    }
+                }
                 Err(e) => errors.push(format!("{}: {}", e.path, e.message)),
             }
         }
@@ -139,6 +149,10 @@ pub fn git_stats_for<Tz: TimeZone>(
         commits.retain(|c| c.at < until);
     }
     let mut stats = aggregate(&commits, tz);
+    stats.commits_by_email = used
+        .iter()
+        .map(|e| (e.clone(), by_email.get(e).map_or(0, HashSet::len)))
+        .collect();
     stats.emails = used.into_iter().collect();
     stats.errors = errors;
     stats
@@ -346,6 +360,14 @@ mod tests {
             BTreeMap::from([(d("2026-10-27"), 1), (d("2026-10-28"), 1)])
         );
         assert_eq!(s.emails, ["now@example.com", "old@uni.example"]);
+        assert_eq!(
+            s.commits_by_email,
+            BTreeMap::from([("now@example.com".into(), 1), ("old@uni.example".into(), 1)])
+        );
+        // A mistyped address is listed with 0 commits.
+        let typo = vec!["old@ßtudenti.example".to_string()];
+        let s = git_stats_for(&pairs, Authors::RepoEmail(&typo), since, None, &Utc);
+        assert_eq!(s.commits_by_email["old@ßtudenti.example"], 0);
         // Without extras only the repo's own email counts.
         let s = git_stats_for(&pairs, Authors::RepoEmail(&[]), since, None, &Utc);
         assert_eq!(s.commits_per_day, BTreeMap::from([(d("2026-10-27"), 1)]));

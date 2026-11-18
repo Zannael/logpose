@@ -241,7 +241,8 @@
     <section class="card">
       <h2>Commits per day</h2>
       <p class="muted note">
-        Only your commits ({view.git.emails.join(", ") || "no git user.email found"}), across all projects and sub-repos.
+        Only your commits, across all projects and sub-repos, by
+        {#each view.git.emails as e, i (e)}{i ? ", " : ""}<span class:none={!view.git.commits_by_email?.[e]} title={view.git.commits_by_email?.[e] ? "" : "No commits by this address in this interval: check the spelling in Settings"}>{e} ({(view.git.commits_by_email?.[e] ?? 0).toLocaleString()})</span>{:else}no git user.email found{/each}.
         Older addresses can be added in Settings.
       </p>
       <div class="heat-wrap">
@@ -348,6 +349,9 @@
 </div>
 
 <style>
+  .note .none {
+    color: var(--red);
+  }
   .stats {
     --s-claude: #2a78d6;
     --s-codex: #eb6834;

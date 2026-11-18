@@ -463,7 +463,9 @@ export const mockBackend: Backend = {
     );
     const month = (n: number) => { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - n); return key(d); };
     return {
-      git: { commits_per_day: commits, projects_per_week: weeks, emails: ["me@example.com", ...statsEmails.map((e) => e.toLowerCase())], errors: [] },
+      git: { commits_per_day: commits, projects_per_week: weeks, emails: ["me@example.com", ...statsEmails.map((e) => e.toLowerCase())],
+        commits_by_email: Object.fromEntries([["me@example.com", Object.values(commits).reduce((a, b) => a + b, 0)], ...statsEmails.map((e) => [e.toLowerCase(), 0])]),
+        errors: [] },
       sessions: { per_project: perProject, per_week: perWeek, unattributed: { claude_code: use(2, 5), codex: use(4, 9) } },
       buckets,
       moves: { [month(1)]: { archived: 1, maintenance: 0 }, [month(0)]: { archived: 0, maintenance: 1 } },

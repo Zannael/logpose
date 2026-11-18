@@ -128,6 +128,8 @@ export interface StatsView {
     commits_per_day: Record<string, number>;
     projects_per_week: Record<string, number>;
     emails: string[];
+    /** Distinct commits per email in the interval; 0 points at a typo or an unused address. */
+    commits_by_email: Record<string, number>;
     errors: string[];
   };
   sessions: {

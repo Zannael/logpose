@@ -89,7 +89,9 @@
     programs !== null &&
       (programInput["claude-code"].trim() !== programs.configured_claude || programInput.codex.trim() !== programs.configured_codex),
   );
+  // Saved when a field is left or Enter is pressed, like the other settings.
   async function savePrograms() {
+    if (!programsDirty) return;
     programStatus = "";
     programError = "";
     try {
@@ -113,16 +115,19 @@
   $effect(() => {
     backend.statsEmails().then(loadEmails).catch((e) => (emailError = String(e)));
   });
-  const emailsDirty = $derived(
-    savedEmails !== null && JSON.stringify(emails.map((e) => e.trim()).filter(Boolean)) !== JSON.stringify(savedEmails),
-  );
+  // Saved as soon as a field is left, Enter is pressed or a row is removed, like the other settings.
   async function saveEmails() {
+    const clean = emails.map((e) => e.trim()).filter(Boolean);
+    if (savedEmails === null || JSON.stringify(clean) === JSON.stringify(savedEmails)) return;
     emailStatus = "";
     emailError = "";
     try {
-      loadEmails(await backend.setStatsEmails(emails));
+      const stored = await backend.setStatsEmails(clean);
+      savedEmails = stored;
+      // Keep a blank row being typed into; replace the rest with what was stored.
+      emails = emails.some((e) => !e.trim()) ? [...stored, ""] : [...stored];
       forgetKeptStats();
-      emailStatus = "Saved. Stats will use them next time you open the tab.";
+      emailStatus = "Saved.";
     } catch (e) {
       emailError = String(e);
     }
@@ -244,19 +249,19 @@
     <h3>Your commit emails</h3>
     <p class="muted">
       Stats count commits made with each repo's git <code>user.email</code>. Add any older or other addresses you've
-      committed with, so those commits count too. Saved in your local config only.
+      committed with, so those commits count too. Saved as you go, in your local config only. Stats shows how many
+      commits each address matched.
     </p>
     <ul class="rows">
       {#each emails as _, i (i)}
         <li>
-          <input class="grow" type="email" bind:value={emails[i]} placeholder="name@example.com" aria-label={`Commit email ${i + 1}`} />
-          <button class="link" onclick={() => (emails = emails.filter((_, k) => k !== i))} aria-label={`Remove commit email ${i + 1}`}>Remove</button>
+          <input class="grow" type="email" bind:value={emails[i]} onchange={saveEmails} placeholder="name@example.com" aria-label={`Commit email ${i + 1}`} />
+          <button class="link" onclick={() => { emails = emails.filter((_, k) => k !== i); saveEmails(); }} aria-label={`Remove commit email ${i + 1}`}>Remove</button>
         </li>
       {/each}
     </ul>
     <div class="add">
       <button onclick={() => (emails = [...emails, ""])}>Add email</button>
-      <button onclick={saveEmails} disabled={!emailsDirty}>Save emails</button>
       {#if emailError}<span class="error small" role="alert">{emailError}</span>{:else if emailStatus}<span class="ok small" role="status">{emailStatus}</span>{/if}
     </div>
   </section>
@@ -311,7 +316,7 @@
     <h4>Programs</h4>
     <p class="muted">
       Logpose looks on <code>PATH</code> and in the usual install folders (<code>~/.local/bin</code>, npm, nvm, Homebrew…).
-      Enter a path only if a program is installed somewhere else.
+      Enter a path only if a program is installed somewhere else; it's saved when you leave the field.
     </p>
     <ul class="rows">
       {#each agents as a (a.id)}
@@ -321,6 +326,7 @@
           <input
             class="grow"
             bind:value={programInput[a.id]}
+            onchange={savePrograms}
             placeholder={programs === null ? "" : f && !programs[a.id === "codex" ? "configured_codex" : "configured_claude"] ? f : "Find automatically"}
             aria-label={`Path to the ${a.label} program`}
           />
@@ -330,10 +336,7 @@
         </li>
       {/each}
     </ul>
-    <div class="add">
-      <button onclick={savePrograms} disabled={!programsDirty}>Save paths</button>
-      {#if programError}<span class="error small" role="alert">{programError}</span>{:else if programStatus}<span class="ok small" role="status">{programStatus}</span>{/if}
-    </div>
+    {#if programError}<p class="error small" role="alert">{programError}</p>{:else if programStatus}<p class="ok small" role="status">{programStatus}</p>{/if}
   </section>
 
   <footer>

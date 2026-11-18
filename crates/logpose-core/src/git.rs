@@ -326,7 +326,7 @@ pub fn authored_commits(
     path: &Path,
     emails: &[String],
     since: DateTime<Utc>,
-) -> Result<Vec<(String, DateTime<Utc>)>, GitError> {
+) -> Result<Vec<(String, DateTime<Utc>, String)>, GitError> {
     let mut repo = gix::open(path).map_err(|e| err(path, e))?;
     repo.object_cache_size_if_unset(4 * 1024 * 1024);
     let mut tips: Vec<gix::ObjectId> = repo.head_id().ok().map(|id| id.detach()).into_iter().collect();
@@ -365,7 +365,7 @@ pub fn authored_commits(
             continue;
         };
         if at >= since {
-            out.push((info.id.to_string(), at));
+            out.push((info.id.to_string(), at, email));
         }
     }
     Ok(out)
