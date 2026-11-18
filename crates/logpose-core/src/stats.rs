@@ -66,6 +66,7 @@ pub fn aggregate<Tz: TimeZone>(commits: &[ProjectCommit], tz: &Tz) -> GitStats {
 
 /// Read authored commits since `since` from every project's own repo and sub-repos, then aggregate.
 /// `emails` are matched case-insensitively; when empty, each repo's own `user.email` is used.
+/// [`git_stats_for`] can count both.
 pub fn git_stats<Tz: TimeZone>(
     projects: &[ProjectReport],
     emails: &[String],
@@ -79,14 +80,28 @@ pub fn git_stats<Tz: TimeZone>(
             (p.project.path.clone(), repos.map(|r| r.path.clone()).collect())
         })
         .collect();
-    git_stats_for(&repos, emails, since, None, tz)
+    let who = if emails.is_empty() {
+        Authors::RepoEmail(&[])
+    } else {
+        Authors::Only(emails)
+    };
+    git_stats_for(&repos, who, since, None, tz)
+}
+
+/// Whose commits count.
+#[derive(Debug, Clone, Copy)]
+pub enum Authors<'a> {
+    /// Exactly these emails.
+    Only(&'a [String]),
+    /// Each repo's own `user.email` plus these (STATS-005: the user's older or other addresses).
+    RepoEmail(&'a [String]),
 }
 
 /// [`git_stats`] over `(project path, repository paths)` pairs, optionally only commits before `until`
 /// (a custom Stats interval, UI-002).
 pub fn git_stats_for<Tz: TimeZone>(
     projects: &[(PathBuf, Vec<PathBuf>)],
-    emails: &[String],
+    authors: Authors,
     since: DateTime<Utc>,
     until: Option<DateTime<Utc>>,
     tz: &Tz,
@@ -96,11 +111,16 @@ pub fn git_stats_for<Tz: TimeZone>(
     let mut used: BTreeSet<String> = BTreeSet::new();
     for (project, repos) in projects {
         for repo in repos {
-            let emails: Vec<String> = if emails.is_empty() {
-                git::user_email(repo).into_iter().collect()
-            } else {
-                emails.iter().map(|e| e.to_lowercase()).collect()
+            let (own, extra) = match authors {
+                Authors::Only(e) => (None, e),
+                Authors::RepoEmail(e) => (git::user_email(repo), e),
             };
+            let mut emails: Vec<String> = own.into_iter().collect();
+            for e in extra.iter().map(|e| e.trim().to_lowercase()) {
+                if !e.is_empty() && !emails.contains(&e) {
+                    emails.push(e);
+                }
+            }
             if emails.is_empty() {
                 continue;
             }
@@ -308,6 +328,30 @@ mod tests {
     }
 
     #[test]
+    fn extra_emails_count_with_the_repo_email() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a");
+        std::fs::create_dir_all(&a).unwrap();
+        git(&a, &["init", "-q", "-b", "main"]);
+        git(&a, &["config", "user.email", "Now@example.com"]);
+        commit(&a, "1.txt", "2026-10-27T10:00:00Z", "Me <now@example.com>");
+        commit(&a, "2.txt", "2026-10-28T10:00:00Z", "Me <old@uni.example>");
+        commit(&a, "3.txt", "2026-10-29T10:00:00Z", "Other <other@example.com>");
+        let pairs = vec![(a.clone(), vec![a.clone()])];
+        let since = t("2026-10-01T00:00:00Z");
+        let extra = vec![" OLD@uni.example ".to_string(), "now@example.com".to_string()];
+        let s = git_stats_for(&pairs, Authors::RepoEmail(&extra), since, None, &Utc);
+        assert_eq!(
+            s.commits_per_day,
+            BTreeMap::from([(d("2026-10-27"), 1), (d("2026-10-28"), 1)])
+        );
+        assert_eq!(s.emails, ["now@example.com", "old@uni.example"]);
+        // Without extras only the repo's own email counts.
+        let s = git_stats_for(&pairs, Authors::RepoEmail(&[]), since, None, &Utc);
+        assert_eq!(s.commits_per_day, BTreeMap::from([(d("2026-10-27"), 1)]));
+    }
+
+    #[test]
     fn fixture_repos_give_expected_aggregates() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("root");
@@ -364,7 +408,7 @@ mod tests {
             .collect();
         let s = git_stats_for(
             &pairs,
-            &emails,
+            Authors::Only(&emails),
             t("2026-10-21T00:00:00Z"),
             Some(t("2026-10-29T00:00:00Z")),
             &Utc,

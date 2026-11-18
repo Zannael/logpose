@@ -48,6 +48,10 @@ export interface Backend {
   agentPrograms(): Promise<AgentPrograms>;
   /** Saves the overrides to config.toml and returns where they now resolve. */
   setAgentPrograms(claude: string, codex: string): Promise<AgentPrograms>;
+  /** More author emails of the user, counted in the commit stats with each repo's user.email. */
+  statsEmails(): Promise<string[]>;
+  /** Saves them (blank and duplicate entries dropped) and returns the stored list. */
+  setStatsEmails(emails: string[]): Promise<string[]>;
   /** Re-applies the suggested column placement to every card; returns the new board. */
   restorePlacement(): Promise<BoardRow[]>;
   /** One-line parking note (empty clears it); returns the board. */
@@ -108,6 +112,8 @@ const tauriBackend: Backend = {
   agentPicker: () => invoke<PickerInfo>("agent_picker"),
   agentPrograms: () => invoke<AgentPrograms>("agent_programs"),
   setAgentPrograms: (claude, codex) => invoke<AgentPrograms>("set_agent_programs", { claude, codex }),
+  statsEmails: () => invoke<string[]>("stats_emails"),
+  setStatsEmails: (emails) => invoke<string[]>("set_stats_emails", { emails }),
   removalPlan: (path) => invoke<RemovalPlan>("removal_plan", { path }),
   checkRemote: (url) => invoke<number>("check_remote", { url }),
   removeProject: async (path, selected, onStep) => {

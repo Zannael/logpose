@@ -3,6 +3,7 @@
   // keys and comments are kept) and triggers a rescan.
   import { backend } from "./backend";
   import { setTheme, theme, type Theme } from "./theme.svelte";
+  import { forgetKeptStats } from "./Stats.svelte";
   import type { AgentCheck, AgentPrograms, Locations, ProjectReport } from "./types";
 
   let { projects, onSaved }: { projects: ProjectReport[]; onSaved: () => Promise<number | null> } = $props();
@@ -97,6 +98,33 @@
       programStatus = "Saved.";
     } catch (e) {
       programError = String(e);
+    }
+  }
+
+  // STATS-005: the user's other author emails for the commit stats.
+  let emails = $state<string[]>([]);
+  let savedEmails = $state<string[] | null>(null);
+  let emailStatus = $state("");
+  let emailError = $state("");
+  function loadEmails(list: string[]) {
+    emails = [...list];
+    savedEmails = list;
+  }
+  $effect(() => {
+    backend.statsEmails().then(loadEmails).catch((e) => (emailError = String(e)));
+  });
+  const emailsDirty = $derived(
+    savedEmails !== null && JSON.stringify(emails.map((e) => e.trim()).filter(Boolean)) !== JSON.stringify(savedEmails),
+  );
+  async function saveEmails() {
+    emailStatus = "";
+    emailError = "";
+    try {
+      loadEmails(await backend.setStatsEmails(emails));
+      forgetKeptStats();
+      emailStatus = "Saved. Stats will use them next time you open the tab.";
+    } catch (e) {
+      emailError = String(e);
     }
   }
 
@@ -209,6 +237,27 @@
         {#each unaliased as p (p.project.path)}<option value={p.project.path}>{p.project.title}</option>{/each}
       </select>
       <button onclick={addAlias} disabled={!newAliasPath}>Add name</button>
+    </div>
+  </section>
+
+  <section>
+    <h3>Your commit emails</h3>
+    <p class="muted">
+      Stats count commits made with each repo's git <code>user.email</code>. Add any older or other addresses you've
+      committed with, so those commits count too. Saved in your local config only.
+    </p>
+    <ul class="rows">
+      {#each emails as _, i (i)}
+        <li>
+          <input class="grow" type="email" bind:value={emails[i]} placeholder="name@example.com" aria-label={`Commit email ${i + 1}`} />
+          <button class="link" onclick={() => (emails = emails.filter((_, k) => k !== i))} aria-label={`Remove commit email ${i + 1}`}>Remove</button>
+        </li>
+      {/each}
+    </ul>
+    <div class="add">
+      <button onclick={() => (emails = [...emails, ""])}>Add email</button>
+      <button onclick={saveEmails} disabled={!emailsDirty}>Save emails</button>
+      {#if emailError}<span class="error small" role="alert">{emailError}</span>{:else if emailStatus}<span class="ok small" role="status">{emailStatus}</span>{/if}
     </div>
   </section>
 

@@ -193,6 +193,7 @@ const programs: AgentPrograms = {
   configured_codex: "",
 };
 const autoPrograms = { ...programs };
+let statsEmails: string[] = [];
 
 let exclude: string[] = ["/home/user/dev/work-*"];
 let aliases: Record<string, string> = { [switchPath]: "Switch sysmodule" };
@@ -326,6 +327,17 @@ export const mockBackend: Backend = {
       },
     };
   },
+  async statsEmails() {
+    return [...statsEmails];
+  },
+  async setStatsEmails(list) {
+    const seen = new Set<string>();
+    const clean = list.map((e) => e.trim()).filter((e) => e && !seen.has(e.toLowerCase()) && seen.add(e.toLowerCase()));
+    const bad = clean.find((e) => !e.includes("@"));
+    if (bad) throw `not an email address: ${bad}`;
+    statsEmails = clean;
+    return [...statsEmails];
+  },
   async agentPrograms() {
     return { ...programs };
   },
@@ -451,7 +463,7 @@ export const mockBackend: Backend = {
     );
     const month = (n: number) => { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - n); return key(d); };
     return {
-      git: { commits_per_day: commits, projects_per_week: weeks, emails: ["me@example.com"], errors: [] },
+      git: { commits_per_day: commits, projects_per_week: weeks, emails: ["me@example.com", ...statsEmails.map((e) => e.toLowerCase())], errors: [] },
       sessions: { per_project: perProject, per_week: perWeek, unattributed: { claude_code: use(2, 5), codex: use(4, 9) } },
       buckets,
       moves: { [month(1)]: { archived: 1, maintenance: 0 }, [month(0)]: { archived: 0, maintenance: 1 } },

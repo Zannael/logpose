@@ -397,7 +397,14 @@ async fn stats(
             return Err("the end date is before the start date".into());
         }
         let pairs: Vec<(PathBuf, Vec<PathBuf>)> = projects.into_iter().map(|p| (p.path, p.repos)).collect();
-        let git = stats::git_stats_for(&pairs, &[], since, until, &local);
+        let config = Config::load(&config_path()?).map_err(|e| e.to_string())?;
+        let git = stats::git_stats_for(
+            &pairs,
+            stats::Authors::RepoEmail(&config.stats.emails),
+            since,
+            until,
+            &local,
+        );
 
         let logs = LogSources::defaults();
         let mut sessions = logs
@@ -912,6 +919,20 @@ fn agent_programs_for(config: &Config) -> AgentPrograms {
     }
 }
 
+/// The user's extra commit emails for the stats (STATS-005).
+#[tauri::command]
+fn stats_emails() -> Result<Vec<String>, String> {
+    let config = Config::load(&config_path()?).map_err(|e| e.to_string())?;
+    Ok(config.stats.emails)
+}
+
+/// Save the extra commit emails; returns them as stored.
+#[tauri::command]
+fn set_stats_emails(emails: Vec<String>) -> Result<Vec<String>, String> {
+    config::save_stats_emails(&config_path()?, &emails).map_err(|e| e.to_string())?;
+    stats_emails()
+}
+
 /// Where the agent CLIs are (Settings).
 #[tauri::command]
 fn agent_programs() -> Result<AgentPrograms, String> {
@@ -1158,6 +1179,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             agent_programs,
             set_agent_programs,
+            stats_emails,
+            set_stats_emails,
             removal_plan,
             check_remote,
             remove_project,

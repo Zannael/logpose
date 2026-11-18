@@ -32,6 +32,16 @@ pub struct Config {
     pub next_md: NextMdConfig,
     pub score: ScoreConfig,
     pub open: OpenConfig,
+    pub stats: StatsConfig,
+}
+
+/// Stats options (STATS-005).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct StatsConfig {
+    /// More author emails of the user (old or work addresses), counted together with each repo's
+    /// own `user.email`.
+    pub emails: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +102,7 @@ impl Default for Config {
             next_md: NextMdConfig::default(),
             score: ScoreConfig::default(),
             open: OpenConfig::default(),
+            stats: StatsConfig::default(),
         }
     }
 }
@@ -339,6 +350,35 @@ pub fn save_agent_programs(path: &Path, claude: &str, codex: &str) -> Result<(),
     })
 }
 
+/// Write `[stats] emails` (STATS-005), trimmed, without blanks or case-insensitive duplicates, keeping
+/// everything else. An empty list removes the key.
+pub fn save_stats_emails(path: &Path, emails: &[String]) -> Result<(), ConfigError> {
+    let mut seen = std::collections::BTreeSet::new();
+    let emails: Vec<&str> = emails
+        .iter()
+        .map(|e| e.trim())
+        .filter(|e| !e.is_empty() && seen.insert(e.to_lowercase()))
+        .collect();
+    if let Some(bad) = emails.iter().find(|e| !e.contains('@')) {
+        return Err(ConfigError::Invalid(format!("not an email address: {bad}")));
+    }
+    edit(path, None, |doc| {
+        if emails.is_empty() {
+            if let Some(t) = doc.get_mut("stats").and_then(|t| t.as_table_mut()) {
+                t.remove("emails");
+                if t.is_empty() {
+                    doc.remove("stats");
+                }
+            }
+            return;
+        }
+        if !doc.get("stats").is_some_and(|t| t.is_table()) {
+            doc["stats"] = toml_edit::table();
+        }
+        doc["stats"]["emails"] = toml_edit::value(emails.iter().copied().collect::<toml_edit::Array>());
+    })
+}
+
 /// Parse the file at `path` (missing = empty), apply `change`, validate, then write atomically.
 fn edit(
     path: &Path,
@@ -570,6 +610,27 @@ mod tests {
             std::fs::read_to_string(&path).unwrap().contains("Projects"),
             "file untouched on error"
         );
+    }
+
+    #[test]
+    fn save_stats_emails_sets_dedupes_and_clears() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "roots = [\"/srv/p\"] # mine\n").unwrap();
+        let list = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        save_stats_emails(
+            &path,
+            &list(&[" Old@Uni.example ", "", "old@uni.example", "me@work.example"]),
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# mine"), "{text}");
+        let c = Config::from_toml_with_home(&text, None).unwrap();
+        assert_eq!(c.stats.emails, ["Old@Uni.example", "me@work.example"]);
+        assert!(save_stats_emails(&path, &list(&["nope"])).is_err());
+        save_stats_emails(&path, &[]).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("stats"), "{text}");
     }
 
     #[test]

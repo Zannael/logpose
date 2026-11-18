@@ -6,6 +6,10 @@
   // results never outlive the day they were computed for.
   type Kept = { view: View; computedAt: number; scan: string | null };
   const kept = new Map<string, Kept>();
+  /** Drops every kept result, e.g. after the commit emails changed (STATS-005). */
+  export function forgetKeptStats() {
+    kept.clear();
+  }
 </script>
 
 <script lang="ts">
@@ -238,6 +242,7 @@
       <h2>Commits per day</h2>
       <p class="muted note">
         Only your commits ({view.git.emails.join(", ") || "no git user.email found"}), across all projects and sub-repos.
+        Older addresses can be added in Settings.
       </p>
       <div class="heat-wrap">
         <div class="heat" role="img" aria-label={`Commit heatmap: ${totalCommits} commits on ${activeDays} days`}>
