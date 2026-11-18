@@ -333,8 +333,13 @@ pub fn save_locations(path: &Path, loc: &Locations, home: Option<&Path>) -> Resu
 
 /// Write `[agent] program_claude` / `program_codex` (AGENT-001), keeping everything else. An empty
 /// value removes the key, so the program is found automatically again.
-pub fn save_agent_programs(path: &Path, claude: &str, codex: &str) -> Result<(), ConfigError> {
-    edit(path, None, |doc| {
+pub fn save_agent_programs(
+    path: &Path,
+    claude: &str,
+    codex: &str,
+    home: Option<&Path>,
+) -> Result<(), ConfigError> {
+    edit(path, home, |doc| {
         if !doc.get("agent").is_some_and(|t| t.is_table()) {
             doc["agent"] = toml_edit::table();
         }
@@ -352,7 +357,7 @@ pub fn save_agent_programs(path: &Path, claude: &str, codex: &str) -> Result<(),
 
 /// Write `[stats] emails` (STATS-005), trimmed, without blanks or case-insensitive duplicates, keeping
 /// everything else. An empty list removes the key.
-pub fn save_stats_emails(path: &Path, emails: &[String]) -> Result<(), ConfigError> {
+pub fn save_stats_emails(path: &Path, emails: &[String], home: Option<&Path>) -> Result<(), ConfigError> {
     let mut seen = std::collections::BTreeSet::new();
     let emails: Vec<&str> = emails
         .iter()
@@ -362,7 +367,7 @@ pub fn save_stats_emails(path: &Path, emails: &[String]) -> Result<(), ConfigErr
     if let Some(bad) = emails.iter().find(|e| !e.contains('@')) {
         return Err(ConfigError::Invalid(format!("not an email address: {bad}")));
     }
-    edit(path, None, |doc| {
+    edit(path, home, |doc| {
         if emails.is_empty() {
             if let Some(t) = doc.get_mut("stats").and_then(|t| t.as_table_mut()) {
                 t.remove("emails");
@@ -616,19 +621,18 @@ mod tests {
     fn save_stats_emails_sets_dedupes_and_clears() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(&path, "roots = [\"/srv/p\"] # mine\n").unwrap();
+        // `~` roots must stay valid: validating without the home rejected them.
+        std::fs::write(&path, "roots = [\"~/My Projects\"] # mine\n").unwrap();
+        let home = Some(Path::new("/home/u"));
         let list = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        save_stats_emails(
-            &path,
-            &list(&[" Old@Uni.example ", "", "old@uni.example", "me@work.example"]),
-        )
-        .unwrap();
+        let emails = list(&[" Old@Uni.example ", "", "old@uni.example", "me@work.example"]);
+        save_stats_emails(&path, &emails, home).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("# mine"), "{text}");
-        let c = Config::from_toml_with_home(&text, None).unwrap();
+        let c = Config::from_toml_with_home(&text, home).unwrap();
         assert_eq!(c.stats.emails, ["Old@Uni.example", "me@work.example"]);
-        assert!(save_stats_emails(&path, &list(&["nope"])).is_err());
-        save_stats_emails(&path, &[]).unwrap();
+        assert!(save_stats_emails(&path, &list(&["nope"]), home).is_err());
+        save_stats_emails(&path, &[], home).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains("stats"), "{text}");
     }
@@ -637,23 +641,20 @@ mod tests {
     fn save_agent_programs_sets_and_clears() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            "roots = [\"/srv/p\"]\n[agent]\ndefault = \"codex\" # mine\n",
-        )
-        .unwrap();
-        save_agent_programs(&path, " ~/.nvm/bin/claude ", "").unwrap();
+        let home = Some(Path::new("/home/u"));
+        std::fs::write(&path, "roots = [\"~/p\"]\n[agent]\ndefault = \"codex\" # mine\n").unwrap();
+        save_agent_programs(&path, " ~/.nvm/bin/claude ", "", home).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("default = \"codex\" # mine"), "{text}");
-        let c = Config::from_toml_with_home(&text, None).unwrap();
+        let c = Config::from_toml_with_home(&text, home).unwrap();
         assert_eq!(c.agent.program_claude, "~/.nvm/bin/claude");
         assert_eq!(c.agent.program_codex, "");
-        save_agent_programs(&path, "", "").unwrap();
+        save_agent_programs(&path, "", "", home).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains("program_"), "{text}");
         // A file without an [agent] table gets one.
         std::fs::write(&path, "roots = [\"/srv/p\"]\n").unwrap();
-        save_agent_programs(&path, "", "/opt/codex").unwrap();
+        save_agent_programs(&path, "", "/opt/codex", None).unwrap();
         let c = Config::from_toml_with_home(&std::fs::read_to_string(&path).unwrap(), None).unwrap();
         assert_eq!(c.agent.program_codex, "/opt/codex");
     }

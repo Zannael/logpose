@@ -929,7 +929,8 @@ fn stats_emails() -> Result<Vec<String>, String> {
 /// Save the extra commit emails; returns them as stored.
 #[tauri::command]
 fn set_stats_emails(emails: Vec<String>) -> Result<Vec<String>, String> {
-    config::save_stats_emails(&config_path()?, &emails).map_err(|e| e.to_string())?;
+    config::save_stats_emails(&config_path()?, &emails, Platform::current().home().as_deref())
+        .map_err(|e| e.to_string())?;
     stats_emails()
 }
 
@@ -944,7 +945,8 @@ fn agent_programs() -> Result<AgentPrograms, String> {
 #[tauri::command]
 fn set_agent_programs(claude: String, codex: String) -> Result<AgentPrograms, String> {
     let path = config_path()?;
-    config::save_agent_programs(&path, &claude, &codex).map_err(|e| e.to_string())?;
+    config::save_agent_programs(&path, &claude, &codex, Platform::current().home().as_deref())
+        .map_err(|e| e.to_string())?;
     agent_programs()
 }
 
